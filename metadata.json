@@ -1,0 +1,5 @@
+{
+  "name": "Circuit Lab Notebook",
+  "description": "A lab notebook for recording neuromorphic circuit simulation parameters, waveforms, and observations.",
+  "requestFramePermissions": []
+}
