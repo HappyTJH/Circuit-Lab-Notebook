@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { supabase } from './lib/supabase';
 import { experimentService } from './services/experimentService';
 import { ExperimentRecord, ExperimentRecordInput } from './types/experiment';
 import { ExperimentCard } from './components/ExperimentCard';
@@ -10,17 +11,45 @@ function App() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Load records on mount
+  // Initialize auth and load records
   useEffect(() => {
-    loadRecords();
+    let unsubscribe: () => void;
 
-    // Subscribe to real-time changes
-    const unsubscribe = experimentService.onRecordsChange((updatedRecords) => {
-      setRecords(updatedRecords);
-    });
+    const init = async () => {
+      try {
+        // Check for existing session
+        const { data: { session } } = await supabase.auth.getSession();
+        
+        if (!session) {
+          // If no session, try anonymous sign in
+          const { error: authError } = await supabase.auth.signInAnonymously();
+          if (authError) {
+            console.error("Authentication failed:", authError);
+            setError("Authentication failed. Please check if Anonymous Sign-ins are enabled in Supabase.");
+            setIsLoading(false);
+            return;
+          }
+        }
+
+        // Once authenticated, load records and subscribe
+        await loadRecords();
+
+        // Subscribe to real-time changes
+        unsubscribe = experimentService.onRecordsChange((updatedRecords) => {
+          setRecords(updatedRecords);
+        });
+      } catch (err) {
+        console.error("Initialization error:", err);
+        setIsLoading(false);
+      }
+    };
+
+    init();
 
     return () => {
-      unsubscribe();
+      if (unsubscribe) {
+        unsubscribe();
+      }
     };
   }, []);
 
@@ -79,8 +108,8 @@ function App() {
     };
 
     try {
-      await experimentService.createRecord(newRecordInput);
-      // State update handled by subscription
+      const createdRecord = await experimentService.createRecord(newRecordInput);
+      setRecords(prev => [createdRecord, ...prev]);
       setError(null);
     } catch (err) {
       console.error('Failed to create record:', err);
@@ -104,7 +133,8 @@ function App() {
     };
 
     try {
-      await experimentService.createRecord(newRecordInput);
+      const createdRecord = await experimentService.createRecord(newRecordInput);
+      setRecords(prev => [createdRecord, ...prev]);
       setError(null);
     } catch (err) {
       console.error('Failed to duplicate record:', err);
