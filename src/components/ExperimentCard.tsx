@@ -1,5 +1,6 @@
 import React, { useRef } from 'react';
-import { ExperimentRecord, TRANSISTOR_NAMES, CAPACITOR_NAMES, VOLTAGE_NAMES } from '../types';
+import { TRANSISTOR_NAMES, CAPACITOR_NAMES, VOLTAGE_NAMES } from '../types';
+import { ExperimentRecord } from '../types/experiment';
 import { TransistorInput } from './TransistorInput';
 import { Trash2, Upload, FileText, Activity, Cpu, Zap, User, Gauge } from 'lucide-react';
 
@@ -37,7 +38,7 @@ export const ExperimentCard: React.FC<ExperimentCardProps> = ({ record, onUpdate
     if (file) {
       const reader = new FileReader();
       reader.onloadend = () => {
-        onUpdate(record.id, { waveformImage: reader.result as string });
+        onUpdate(record.id, { waveform_image: reader.result as string });
       };
       reader.readAsDataURL(file);
     }
@@ -68,7 +69,7 @@ export const ExperimentCard: React.FC<ExperimentCardProps> = ({ record, onUpdate
           </div>
           <div>
             <h3 className="font-semibold text-gray-900">
-              Experiment Record {record.sequenceNumber?.toString().padStart(3, '0')}
+              Experiment Record {record.sequence_number?.toString().padStart(3, '0')}
             </h3>
             <p className="text-xs text-gray-500 font-mono">{record.id} • {formatDate(record.timestamp)}</p>
           </div>
@@ -186,16 +187,16 @@ export const ExperimentCard: React.FC<ExperimentCardProps> = ({ record, onUpdate
               <h4 className="text-sm font-bold text-gray-700 uppercase tracking-wider">Waveform / Simulation Result</h4>
             </div>
             <div className="border-2 border-dashed border-gray-300 rounded-lg p-4 flex flex-col items-center justify-center min-h-[200px] bg-gray-50 hover:bg-gray-100 transition-colors relative">
-              {record.waveformImage ? (
+              {record.waveform_image ? (
                 <div className="relative w-full h-full group">
                   <img 
-                    src={record.waveformImage} 
+                    src={record.waveform_image} 
                     alt="Waveform" 
                     className="max-h-[300px] w-full object-contain rounded-md" 
                   />
                   <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center rounded-md">
                     <button 
-                      onClick={() => onUpdate(record.id, { waveformImage: null })}
+                      onClick={() => onUpdate(record.id, { waveform_image: '' })}
                       className="bg-red-500 text-white px-4 py-2 rounded-md font-medium text-sm hover:bg-red-600"
                     >
                       Remove Image

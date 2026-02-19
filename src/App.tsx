@@ -1,115 +1,175 @@
 import React, { useState, useEffect } from 'react';
-import { ExperimentRecord } from './types';
+import { experimentService } from './services/experimentService';
+import { ExperimentRecord, ExperimentRecordInput } from './types/experiment';
 import { ExperimentCard } from './components/ExperimentCard';
 import { Plus, BookOpen, Download, RotateCcw } from 'lucide-react';
 
 function App() {
   const [records, setRecords] = useState<ExperimentRecord[]>([]);
   const [deletedRecords, setDeletedRecords] = useState<ExperimentRecord[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  const generateId = () => {
-    if (typeof crypto !== 'undefined' && crypto.randomUUID) {
-      return crypto.randomUUID().slice(0, 8);
-    }
-    return Math.random().toString(36).substring(2, 10);
-  };
-
-  // Load from local storage on mount
+  // Load records on mount
   useEffect(() => {
-    const saved = localStorage.getItem('circuit-lab-notebook');
-    if (saved) {
-      try {
-        const parsedRecords = JSON.parse(saved);
-        // Migration logic for old records
-        const migratedRecords = parsedRecords.map((rec: any, index: number) => ({
-          ...rec,
-          // If sequenceNumber is missing, assign based on reverse index (assuming newest first)
-          sequenceNumber: rec.sequenceNumber ?? (parsedRecords.length - index),
-          experimenter: rec.experimenter ?? '',
-          voltages: rec.voltages ?? {}
-        }));
-        setRecords(migratedRecords);
-      } catch (e) {
-        console.error("Failed to load records", e);
-      }
-    } else {
-      // Create an initial empty record if nothing exists
-      const newRecord: ExperimentRecord = {
-        id: generateId(),
-        sequenceNumber: 1,
-        timestamp: Date.now(),
-        experimenter: '',
-        transistors: {},
-        capacitors: {},
-        voltages: {},
-        waveformImage: null,
-        observations: ''
-      };
-      setRecords([newRecord]);
-    }
+    loadRecords();
+
+    // Subscribe to real-time changes
+    const unsubscribe = experimentService.onRecordsChange((updatedRecords) => {
+      setRecords(updatedRecords);
+    });
+
+    return () => {
+      unsubscribe();
+    };
   }, []);
 
-  // Save to local storage whenever records change
-  useEffect(() => {
-    localStorage.setItem('circuit-lab-notebook', JSON.stringify(records));
-  }, [records]);
+  const loadRecords = async () => {
+    try {
+      setIsLoading(true);
+      const fetchedRecords = await experimentService.getAllRecords();
+      setRecords(fetchedRecords);
+      setError(null);
+    } catch (err) {
+      console.error('Failed to load records:', err);
+      setError('Failed to load records from database. Using local backup if available.');
+      
+      // Fallback to local storage
+      const saved = localStorage.getItem('circuit-lab-notebook');
+      if (saved) {
+        try {
+          const parsedRecords = JSON.parse(saved);
+          // Map old format to new format if necessary
+          const migratedRecords = parsedRecords.map((rec: any) => ({
+            id: rec.id,
+            user_id: rec.user_id || 'local',
+            sequence_number: rec.sequenceNumber ?? rec.sequence_number ?? 0,
+            timestamp: rec.timestamp,
+            experimenter: rec.experimenter || '',
+            transistors: rec.transistors || {},
+            capacitors: rec.capacitors || {},
+            voltages: rec.voltages || {},
+            waveform_image: rec.waveformImage ?? rec.waveform_image ?? '',
+            observations: rec.observations || '',
+            created_at: rec.created_at || new Date().toISOString(),
+            updated_at: rec.updated_at || new Date().toISOString()
+          }));
+          setRecords(migratedRecords);
+        } catch (e) {
+          console.error("Failed to parse local records", e);
+        }
+      }
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
-  const addRecord = () => {
-    // Calculate next sequence number
-    const maxSeq = records.reduce((max, rec) => Math.max(max, rec.sequenceNumber || 0), 0);
+  const addRecord = async () => {
+    const maxSeq = records.reduce((max, rec) => Math.max(max, rec.sequence_number || 0), 0);
     
-    const newRecord: ExperimentRecord = {
-      id: generateId(),
-      sequenceNumber: maxSeq + 1,
+    const newRecordInput: ExperimentRecordInput = {
+      sequence_number: maxSeq + 1,
       timestamp: Date.now(),
-      // Copy experimenter from the most recent record if available
       experimenter: records.length > 0 ? records[0].experimenter : '',
       transistors: {},
       capacitors: {},
       voltages: {},
-      waveformImage: null,
+      waveform_image: '',
       observations: ''
     };
-    setRecords(prev => [newRecord, ...prev]);
-  };
 
-  const duplicateRecord = (sourceRecord: ExperimentRecord) => {
-    const maxSeq = records.reduce((max, rec) => Math.max(max, rec.sequenceNumber || 0), 0);
-
-    const newRecord: ExperimentRecord = {
-      ...sourceRecord,
-      id: generateId(),
-      sequenceNumber: maxSeq + 1,
-      timestamp: Date.now(),
-      // We keep the data but maybe we want to clear the image? 
-      // The user said "content exactly the same as before", so we keep everything.
-    };
-    setRecords(prev => [newRecord, ...prev]);
-  };
-
-  const updateRecord = (id: string, updates: Partial<ExperimentRecord>) => {
-    setRecords(prev => prev.map(rec => rec.id === id ? { ...rec, ...updates } : rec));
-  };
-
-  const deleteRecord = (id: string) => {
-    const recordToDelete = records.find(rec => rec.id === id);
-    if (recordToDelete) {
-      setDeletedRecords(prev => [...prev, recordToDelete]);
-      setRecords(prev => prev.filter(rec => rec.id !== id));
+    try {
+      await experimentService.createRecord(newRecordInput);
+      // State update handled by subscription
+      setError(null);
+    } catch (err) {
+      console.error('Failed to create record:', err);
+      setError('Failed to create record. Please try again.');
+      // Local fallback logic could go here if needed
     }
   };
 
-  const undoDelete = () => {
+  const duplicateRecord = async (sourceRecord: ExperimentRecord) => {
+    const maxSeq = records.reduce((max, rec) => Math.max(max, rec.sequence_number || 0), 0);
+
+    const newRecordInput: ExperimentRecordInput = {
+      sequence_number: maxSeq + 1,
+      timestamp: Date.now(),
+      experimenter: sourceRecord.experimenter,
+      transistors: sourceRecord.transistors,
+      capacitors: sourceRecord.capacitors,
+      voltages: sourceRecord.voltages,
+      waveform_image: sourceRecord.waveform_image,
+      observations: sourceRecord.observations
+    };
+
+    try {
+      await experimentService.createRecord(newRecordInput);
+      setError(null);
+    } catch (err) {
+      console.error('Failed to duplicate record:', err);
+      setError('Failed to duplicate record.');
+    }
+  };
+
+  const updateRecord = async (id: string, updates: Partial<ExperimentRecord>) => {
+    // Optimistic update
+    setRecords(prev => prev.map(rec => rec.id === id ? { ...rec, ...updates } : rec));
+
+    try {
+      // We need to convert Partial<ExperimentRecord> to Partial<ExperimentRecordInput>
+      // The types are compatible for the shared fields
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { id: _, user_id: __, created_at: ___, updated_at: ____, ...inputUpdates } = updates as any;
+      
+      await experimentService.updateRecord(id, inputUpdates);
+      setError(null);
+    } catch (err) {
+      console.error('Failed to update record:', err);
+      setError('Failed to update record.');
+      // Revert optimistic update? Or just let the next subscription update fix it?
+      loadRecords(); 
+    }
+  };
+
+  const deleteRecord = async (id: string) => {
+    const recordToDelete = records.find(rec => rec.id === id);
+    if (recordToDelete) {
+      setDeletedRecords(prev => [...prev, recordToDelete]);
+      
+      // Optimistic delete
+      setRecords(prev => prev.filter(rec => rec.id !== id));
+
+      try {
+        await experimentService.deleteRecord(id);
+        setError(null);
+      } catch (err) {
+        console.error('Failed to delete record:', err);
+        setError('Failed to delete record.');
+        loadRecords(); // Revert
+      }
+    }
+  };
+
+  const undoDelete = async () => {
     if (deletedRecords.length === 0) return;
     
     const recordToRestore = deletedRecords[deletedRecords.length - 1];
     setDeletedRecords(prev => prev.slice(0, -1));
     
-    setRecords(prev => {
-      const newRecords = [recordToRestore, ...prev];
-      // Sort by sequence number descending to maintain order
-      return newRecords.sort((a, b) => (b.sequenceNumber || 0) - (a.sequenceNumber || 0));
-    });
+    // To "restore", we essentially re-create it because the original ID might be gone
+    // Or if we implemented soft-delete we could restore.
+    // Since we did hard delete, we have to create a new one with the same data.
+    
+    const { id, user_id, created_at, updated_at, ...inputData } = recordToRestore;
+    
+    try {
+      await experimentService.createRecord(inputData);
+      setError(null);
+    } catch (err) {
+      console.error('Failed to restore record:', err);
+      setError('Failed to restore record.');
+    }
   };
 
   const exportData = () => {
@@ -121,6 +181,17 @@ function App() {
     downloadAnchorNode.click();
     downloadAnchorNode.remove();
   };
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-gray-100">
+        <div className="flex flex-col items-center gap-4">
+          <div className="w-12 h-12 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
+          <p className="text-gray-600 font-medium">Loading experiments...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gray-100 text-gray-900 font-sans">
@@ -158,7 +229,7 @@ function App() {
           <div>
             <h2 className="text-lg font-medium text-gray-900">Experiment Log</h2>
             <p className="text-sm text-gray-500 mt-1">
-              {records.length} {records.length === 1 ? 'record' : 'records'} stored locally
+              {records.length} {records.length === 1 ? 'record' : 'records'} stored in cloud
             </p>
           </div>
           {deletedRecords.length > 0 && (
@@ -170,6 +241,23 @@ function App() {
             </button>
           )}
         </div>
+
+        {error && (
+          <div className="bg-red-50 border-l-4 border-red-500 p-4 mb-6 rounded-md">
+            <div className="flex">
+              <div className="flex-shrink-0">
+                <svg className="h-5 w-5 text-red-400" viewBox="0 0 20 20" fill="currentColor">
+                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+                </svg>
+              </div>
+              <div className="ml-3">
+                <p className="text-sm text-red-700">
+                  {error}
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
 
         <div className="space-y-6">
           {records.length === 0 ? (
